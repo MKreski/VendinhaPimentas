@@ -47,6 +47,27 @@ public class ClienteService
             .FirstOrDefault(c => c.Id == id);
     }
 
+    // busca um cliente pelo cpf (com ou sem mascara) trazendo as dividas junto
+    public Cliente? BuscarPorCpf(string cpf)
+    {
+        if (string.IsNullOrWhiteSpace(cpf))
+        {
+            return null;
+        }
+
+        var cpfLimpo = LimparCpf(cpf);
+        if (cpfLimpo.Length != 11)
+        {
+            return null;
+        }
+
+        return _context.Clientes
+            .Include(c => c.Dividas)
+            .FirstOrDefault(c =>
+                c.Cpf == cpfLimpo ||
+                c.Cpf.Replace(".", "").Replace("-", "").Trim() == cpfLimpo);
+    }
+
     // lista os clientes paginados, filtrando por nome e ordenando do maior devedor pro menor
     public List<Cliente> ListarClientes(int pagina = 1, int tamanhoPagina = 10, string? termoBuscaNome = null)
     {
