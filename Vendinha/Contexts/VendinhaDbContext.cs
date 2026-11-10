@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Vendinha.Models;
 
 namespace Vendinha.Contexts;
@@ -95,10 +96,27 @@ public class VendinhaDbContext : DbContext
 
             entity.Property(d => d.DataCriacao)
                 .IsRequired()
-                .HasDefaultValueSql("NOW()");
+                .HasDefaultValueSql("NOW()")
+                .HasConversion(new ValueConverter<DateTime, DateTime>(
+                    v => NormalizarParaUtc(v),
+                    v => DateTime.SpecifyKind(v, DateTimeKind.Utc).ToLocalTime()));
 
             entity.Property(d => d.DataPagamento)
-                .IsRequired(false);
+                .IsRequired(false)
+                .HasConversion(new ValueConverter<DateTime?, DateTime?>(
+                    v => v.HasValue ? NormalizarParaUtc(v.Value) : null,
+                    v => v.HasValue ? DateTime.SpecifyKind(v.Value, DateTimeKind.Utc).ToLocalTime() : null));
         });
+    }
+
+    // garante que datas locais (datetime.now) vao em utc pro timestamptz do postgres sem erro do npgsql
+    private static DateTime NormalizarParaUtc(DateTime data)
+    {
+        return data.Kind switch
+        {
+            DateTimeKind.Utc => data,
+            DateTimeKind.Local => data.ToUniversalTime(),
+            _ => DateTime.SpecifyKind(data, DateTimeKind.Local).ToUniversalTime()
+        };
     }
 }
