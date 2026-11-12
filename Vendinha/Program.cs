@@ -26,6 +26,8 @@ catch (Exception ex)
 
 var clienteService = new ClienteService(context);
 var dividaService = new DividaService(context);
+var pimentaService = new PimentaService(context);
+var molhoService = new MolhoService(context, dividaService);
 
 var executando = true;
 
@@ -38,6 +40,9 @@ while (executando)
     Console.WriteLine("[3] Atualizar ou Excluir Cliente");
     Console.WriteLine("[4] Pendurar Compra de Molho de Pimenta (Nova Divida)");
     Console.WriteLine("[5] Ver Dividas de um Cliente e Marcar Pagamento");
+    Console.WriteLine("[6] Gerenciar Tipagens de Pimentas");
+    Console.WriteLine("[7] Gerenciar Catalogo de Molhos do Avo Bob");
+    Console.WriteLine("[8] Relatorio Gerencial de Custos e Lucro da Vendinha");
     Console.WriteLine("[0] Sair");
     Console.WriteLine("============================================================");
     Console.Write("Escolha uma opcao: ");
@@ -59,11 +64,23 @@ while (executando)
             break;
 
         case "4":
-            ExecutarCadastroDivida(clienteService, dividaService, culturaBr);
+            ExecutarCadastroDivida(clienteService, dividaService, molhoService, culturaBr);
             break;
 
         case "5":
             ExecutarConsultaEQuitacaoDividas(clienteService, dividaService, culturaBr);
+            break;
+
+        case "6":
+            ExecutarGerenciamentoPimentas(pimentaService, culturaBr);
+            break;
+
+        case "7":
+            ExecutarGerenciamentoMolhos(molhoService, pimentaService, culturaBr);
+            break;
+
+        case "8":
+            ExecutarRelatorioGerencial(molhoService, culturaBr);
             break;
 
         case "0":
@@ -82,7 +99,7 @@ static void ExibirCabecalho()
 {
     Console.WriteLine("============================================================");
     Console.WriteLine("       VENDINHA DE MOLHOS DE PIMENTA DO AVO BOB");
-    Console.WriteLine("           caderneta digital de vendas fiado");
+    Console.WriteLine("     caderneta de vendas fiado & producao artesanal");
     Console.WriteLine("============================================================");
 }
 
@@ -338,7 +355,11 @@ static void ExecutarAtualizacaoOuExclusao(ClienteService clienteService, Culture
     Pausar();
 }
 
-static void ExecutarCadastroDivida(ClienteService clienteService, DividaService dividaService, CultureInfo culturaBr)
+static void ExecutarCadastroDivida(
+    ClienteService clienteService,
+    DividaService dividaService,
+    MolhoService molhoService,
+    CultureInfo culturaBr)
 {
     LimparTela();
     ExibirCabecalho();
@@ -359,22 +380,83 @@ static void ExecutarCadastroDivida(ClienteService clienteService, DividaService 
         }
 
         Console.WriteLine($"Cliente: {cliente.NomeCompleto} (CPF: {FormatarCpf(cliente.Cpf)})");
+        Console.WriteLine("------------------------------------------------------------");
+        Console.WriteLine("[1] Escolher molho do catalogo (calcula valor automatico)");
+        Console.WriteLine("[2] Lancamento manual (descricao e valor livres)");
+        Console.WriteLine("[0] Cancelar");
+        Console.Write("Escolha o modo: ");
+        var modo = Console.ReadLine()?.Trim();
 
-        Console.Write("Quais molhos do Avo Bob o cliente pegou? (ENTER para descricao padrao): ");
-        var descricao = Console.ReadLine();
+        Divida novaDivida;
 
-        Console.Write("Valor da compra (R$): ");
-        var valorTexto = Console.ReadLine();
-
-        if (!TryParseValor(valorTexto, culturaBr, out var valor))
+        switch (modo)
         {
-            throw new ArgumentException("Valor invalido. Informe um numero positivo (ex: 29,90).");
+            case "1":
+                var catalogo = molhoService.ListarCatalogo();
+                if (catalogo.Count == 0)
+                {
+                    Console.WriteLine("\nNenhum molho cadastrado no catalogo ainda. Cadastre um na opcao [7] ou use o lancamento manual.");
+                    Pausar();
+                    return;
+                }
+
+                Console.WriteLine("\nMolhos disponiveis:");
+                foreach (var molho in catalogo)
+                {
+                    var tipo = molho is MolhoEspecialReserva reserva
+                        ? $"Reserva ({reserva.TempoMaturacaoDias}d)"
+                        : "Tradicional";
+                    var shu = molho.PimentaBase?.NivelScoville ?? 0;
+
+                    Console.WriteLine(
+                        $"ID: {molho.Id,-3} | {molho.Nome,-28} | {tipo,-15} | {shu,9:N0} SHU | Preco: {molho.PrecoVenda.ToString("C2", culturaBr)}");
+                }
+
+                Console.Write("\nInforme o ID do molho escolhido: ");
+                if (!int.TryParse(Console.ReadLine()?.Trim(), out var molhoId))
+                {
+                    throw new ArgumentException("ID do molho invalido.");
+                }
+
+                Console.Write("Quantidade de frascos: ");
+                if (!int.TryParse(Console.ReadLine()?.Trim(), out var quantidadeFrascos) || quantidadeFrascos <= 0)
+                {
+                    throw new ArgumentException("Informe uma quantidade inteira de frascos maior que zero.");
+                }
+
+                Console.Write("Observacao opcional (ENTER usa o nome do molho automaticamente): ");
+                var observacao = Console.ReadLine();
+
+                novaDivida = dividaService.CadastrarDividaPorMolho(cliente.Id, molhoId, quantidadeFrascos, observacao);
+                break;
+
+            case "2":
+                Console.Write("Quais molhos do Avo Bob o cliente pegou? (ENTER para descricao padrao): ");
+                var descricao = Console.ReadLine();
+
+                Console.Write("Valor da compra (R$): ");
+                var valorTexto = Console.ReadLine();
+
+                if (!TryParseDecimal(valorTexto, culturaBr, out var valor))
+                {
+                    throw new ArgumentException("Valor invalido. Informe um numero positivo (ex: 29,90).");
+                }
+
+                novaDivida = dividaService.CadastrarDivida(cliente.Id, valor, descricao);
+                break;
+
+            case "0":
+                return;
+
+            default:
+                Console.WriteLine("\nOpcao invalida.");
+                Pausar();
+                return;
         }
 
-        var novaDivida = dividaService.CadastrarDivida(cliente.Id, valor, descricao);
-
         Console.WriteLine("\nCompra pendurada na caderneta com sucesso!");
-        Console.WriteLine($"Divida ID: {novaDivida.Id} | Molhos: {novaDivida.DescricaoMolhos} | Valor: {novaDivida.Valor.ToString("C2", culturaBr)} | Data: {novaDivida.DataCriacao:dd/MM/yyyy HH:mm}");
+        Console.WriteLine(
+            $"Divida ID: {novaDivida.Id} | Qtd: {novaDivida.QuantidadeFrascos} frasco(s) | Molhos: {novaDivida.DescricaoMolhos} | Valor: {novaDivida.Valor.ToString("C2", culturaBr)} | Data: {novaDivida.DataCriacao:dd/MM/yyyy HH:mm}");
     }
     catch (Exception ex)
     {
@@ -424,7 +506,7 @@ static void ExecutarConsultaEQuitacaoDividas(ClienteService clienteService, Divi
                 : "-";
 
             Console.WriteLine(
-                $"ID: {divida.Id,-4} | {situacao,-9} | {divida.Valor.ToString("C2", culturaBr),-10} | Compra: {divida.DataCriacao:dd/MM/yyyy HH:mm} | Pagto: {dataPagto}");
+                $"ID: {divida.Id,-4} | {situacao,-9} | {divida.Valor.ToString("C2", culturaBr),-10} | Qtd: {divida.QuantidadeFrascos,-2} | Compra: {divida.DataCriacao:dd/MM/yyyy HH:mm} | Pagto: {dataPagto}");
             Console.WriteLine($"         Molhos: {divida.DescricaoMolhos}");
         }
 
@@ -454,6 +536,338 @@ static void ExecutarConsultaEQuitacaoDividas(ClienteService clienteService, Divi
     catch (Exception ex)
     {
         Console.WriteLine($"\nErro ao consultar/quitar divida: {ex.Message}");
+    }
+
+    Pausar();
+}
+
+static void ExecutarGerenciamentoPimentas(PimentaService pimentaService, CultureInfo culturaBr)
+{
+    while (true)
+    {
+        LimparTela();
+        ExibirCabecalho();
+        Console.WriteLine("GERENCIAR TIPAGENS DE PIMENTAS");
+        Console.WriteLine("------------------------------------------------------------");
+        Console.WriteLine("[1] Listar pimentas cadastradas");
+        Console.WriteLine("[2] Cadastrar nova pimenta");
+        Console.WriteLine("[3] Atualizar pimenta");
+        Console.WriteLine("[4] Remover pimenta");
+        Console.WriteLine("[0] Voltar ao menu principal");
+        Console.Write("Escolha: ");
+        var opcao = Console.ReadLine()?.Trim();
+
+        try
+        {
+            switch (opcao)
+            {
+                case "1":
+                    var pimentas = pimentaService.ListarPimentas();
+                    Console.WriteLine("\n--- PIMENTAS DO AVO BOB ---");
+                    if (pimentas.Count == 0)
+                    {
+                        Console.WriteLine("Nenhuma pimenta cadastrada ainda.");
+                    }
+                    else
+                    {
+                        foreach (var p in pimentas)
+                        {
+                            Console.WriteLine(
+                                $"ID: {p.Id,-3} | {p.Nome,-20} | Especie: {p.EspecieOrigem,-22} | {p.NivelScoville,9:N0} SHU | Custo/g: {p.CustoPorGrama.ToString("C4", culturaBr)}");
+                        }
+                    }
+                    Pausar();
+                    break;
+
+                case "2":
+                    Console.Write("\nNome da pimenta (ex: Carolina Reaper): ");
+                    var nome = Console.ReadLine() ?? string.Empty;
+
+                    Console.Write("Especie de origem (ex: Capsicum chinense): ");
+                    var especie = Console.ReadLine() ?? string.Empty;
+
+                    Console.Write("Nivel Scoville (SHU - numero inteiro positivo): ");
+                    if (!int.TryParse(Console.ReadLine()?.Trim(), out var scoville))
+                    {
+                        throw new ArgumentException("Nivel Scoville invalido. Informe um numero inteiro positivo.");
+                    }
+
+                    Console.Write("Custo por grama (R$/g - ex: 0,15): ");
+                    if (!TryParseDecimal(Console.ReadLine(), culturaBr, out var custoPorGrama))
+                    {
+                        throw new ArgumentException("Custo por grama invalido.");
+                    }
+
+                    var criada = pimentaService.CadastrarPimenta(new Pimenta
+                    {
+                        Nome = nome,
+                        EspecieOrigem = especie,
+                        NivelScoville = scoville,
+                        CustoPorGrama = custoPorGrama
+                    });
+
+                    Console.WriteLine($"\nPimenta '{criada.Nome}' (ID {criada.Id}) cadastrada com sucesso!");
+                    Pausar();
+                    break;
+
+                case "3":
+                    Console.Write("\nInforme o ID da pimenta para atualizar: ");
+                    if (!int.TryParse(Console.ReadLine()?.Trim(), out var idAtualizar))
+                    {
+                        throw new ArgumentException("ID invalido.");
+                    }
+
+                    var atual = pimentaService.BuscarPorId(idAtualizar);
+                    if (atual is null)
+                    {
+                        Console.WriteLine("Pimenta nao encontrada.");
+                        Pausar();
+                        break;
+                    }
+
+                    Console.Write($"Nome [{atual.Nome}] (ENTER mantem): ");
+                    var novoNome = Console.ReadLine();
+
+                    Console.Write($"Especie [{atual.EspecieOrigem}] (ENTER mantem): ");
+                    var novaEspecie = Console.ReadLine();
+
+                    Console.Write($"Nivel Scoville [{atual.NivelScoville}] (ENTER mantem): ");
+                    var novoScovilleTexto = Console.ReadLine();
+                    var novoScoville = atual.NivelScoville;
+                    if (!string.IsNullOrWhiteSpace(novoScovilleTexto) &&
+                        !int.TryParse(novoScovilleTexto.Trim(), out novoScoville))
+                    {
+                        throw new ArgumentException("Nivel Scoville invalido.");
+                    }
+
+                    Console.Write($"Custo/g [{atual.CustoPorGrama.ToString("N4", culturaBr)}] (ENTER mantem): ");
+                    var novoCustoTexto = Console.ReadLine();
+                    var novoCusto = atual.CustoPorGrama;
+                    if (!string.IsNullOrWhiteSpace(novoCustoTexto) &&
+                        !TryParseDecimal(novoCustoTexto, culturaBr, out novoCusto))
+                    {
+                        throw new ArgumentException("Custo por grama invalido.");
+                    }
+
+                    var atualizada = pimentaService.AtualizarPimenta(new Pimenta
+                    {
+                        Id = atual.Id,
+                        Nome = string.IsNullOrWhiteSpace(novoNome) ? atual.Nome : novoNome,
+                        EspecieOrigem = string.IsNullOrWhiteSpace(novaEspecie) ? atual.EspecieOrigem : novaEspecie,
+                        NivelScoville = novoScoville,
+                        CustoPorGrama = novoCusto
+                    });
+
+                    Console.WriteLine($"\nPimenta '{atualizada.Nome}' atualizada!");
+                    Pausar();
+                    break;
+
+                case "4":
+                    Console.Write("\nInforme o ID da pimenta para remover: ");
+                    if (!int.TryParse(Console.ReadLine()?.Trim(), out var idRemover))
+                    {
+                        throw new ArgumentException("ID invalido.");
+                    }
+
+                    pimentaService.RemoverPimenta(idRemover);
+                    Console.WriteLine("Pimenta removida com sucesso!");
+                    Pausar();
+                    break;
+
+                case "0":
+                    return;
+
+                default:
+                    Console.WriteLine("Opcao invalida.");
+                    Pausar();
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"\nErro no gerenciamento de pimentas: {ex.Message}");
+            Pausar();
+        }
+    }
+}
+
+static void ExecutarGerenciamentoMolhos(
+    MolhoService molhoService,
+    PimentaService pimentaService,
+    CultureInfo culturaBr)
+{
+    while (true)
+    {
+        LimparTela();
+        ExibirCabecalho();
+        Console.WriteLine("CATALOGO DE MOLHOS DO AVO BOB");
+        Console.WriteLine("------------------------------------------------------------");
+        Console.WriteLine("[1] Listar catalogo (ardencia, custo, preco e margem)");
+        Console.WriteLine("[2] Criar receita de Molho Tradicional");
+        Console.WriteLine("[3] Criar receita de Molho Especial Reserva (barril)");
+        Console.WriteLine("[0] Voltar ao menu principal");
+        Console.Write("Escolha: ");
+        var opcao = Console.ReadLine()?.Trim();
+
+        try
+        {
+            switch (opcao)
+            {
+                case "1":
+                    var catalogo = molhoService.ListarCatalogo();
+                    Console.WriteLine("\n--- CATALOGO ARTESANAL ---");
+                    if (catalogo.Count == 0)
+                    {
+                        Console.WriteLine("Nenhum molho cadastrado no catalogo ainda.");
+                    }
+                    else
+                    {
+                        foreach (var molho in catalogo)
+                        {
+                            var tipo = molho is MolhoEspecialReserva reserva
+                                ? $"Especial Reserva ({reserva.TempoMaturacaoDias}d barril)"
+                                : "Tradicional";
+                            var nomePimenta = molho.PimentaBase?.Nome ?? "Desconhecida";
+                            var scoville = molho.PimentaBase?.NivelScoville ?? 0;
+
+                            Console.WriteLine(
+                                $"ID: {molho.Id,-3} | {molho.Nome} [{tipo}]");
+                            Console.WriteLine(
+                                $"         Pimenta: {nomePimenta} ({scoville:N0} SHU) | Custo: {molho.CustoTotalProducao.ToString("C2", culturaBr)} | Venda: {molho.PrecoVenda.ToString("C2", culturaBr)} | Lucro: {molho.LucroUnitario.ToString("C2", culturaBr)} ({molho.MargemLucroPercentual:N1}%)");
+                        }
+                    }
+                    Pausar();
+                    break;
+
+                case "2":
+                case "3":
+                    var ehReserva = opcao == "3";
+                    var pimentas = pimentaService.ListarPimentas();
+                    if (pimentas.Count == 0)
+                    {
+                        Console.WriteLine("\nCadastre ao menos uma pimenta na opcao [6] antes de criar um molho.");
+                        Pausar();
+                        break;
+                    }
+
+                    Console.WriteLine("\nPimentas disponiveis para a receita:");
+                    foreach (var p in pimentas)
+                    {
+                        Console.WriteLine($"  ID: {p.Id,-3} | {p.Nome} ({p.NivelScoville:N0} SHU - {p.CustoPorGrama.ToString("C4", culturaBr)}/g)");
+                    }
+
+                    Console.Write("\nNome do molho: ");
+                    var nomeMolho = Console.ReadLine() ?? string.Empty;
+
+                    Console.Write("ID da pimenta base: ");
+                    if (!int.TryParse(Console.ReadLine()?.Trim(), out var pimentaId))
+                    {
+                        throw new ArgumentException("ID da pimenta invalido.");
+                    }
+
+                    Console.Write("Gramas de pimenta por frasco: ");
+                    if (!TryParseDecimal(Console.ReadLine(), culturaBr, out var gramas))
+                    {
+                        throw new ArgumentException("Quantidade em gramas invalida.");
+                    }
+
+                    Console.Write("Custo de embalagem e ingredientes (vidro, rotulo, vinagre) (R$): ");
+                    if (!TryParseDecimal(Console.ReadLine(), culturaBr, out var custoEmbalagem))
+                    {
+                        throw new ArgumentException("Custo de embalagem/ingredientes invalido.");
+                    }
+
+                    Console.Write("Preco de venda por frasco (R$): ");
+                    if (!TryParseDecimal(Console.ReadLine(), culturaBr, out var precoVenda))
+                    {
+                        throw new ArgumentException("Preco de venda invalido.");
+                    }
+
+                    Molho novoMolho;
+                    if (ehReserva)
+                    {
+                        Console.Write("Tempo de maturacao em barril (dias): ");
+                        if (!int.TryParse(Console.ReadLine()?.Trim(), out var diasMaturacao))
+                        {
+                            throw new ArgumentException("Tempo de maturacao invalido.");
+                        }
+
+                        Console.Write("Custo adicional do barril por frasco (R$): ");
+                        if (!TryParseDecimal(Console.ReadLine(), culturaBr, out var custoBarril))
+                        {
+                            throw new ArgumentException("Custo adicional do barril invalido.");
+                        }
+
+                        novoMolho = new MolhoEspecialReserva
+                        {
+                            Nome = nomeMolho,
+                            PimentaId = pimentaId,
+                            GramasPimentaPorFrasco = gramas,
+                            CustoEmbalagemIngredientes = custoEmbalagem,
+                            PrecoVenda = precoVenda,
+                            TempoMaturacaoDias = diasMaturacao,
+                            CustoAdicionalBarril = custoBarril
+                        };
+                    }
+                    else
+                    {
+                        novoMolho = new Molho
+                        {
+                            Nome = nomeMolho,
+                            PimentaId = pimentaId,
+                            GramasPimentaPorFrasco = gramas,
+                            CustoEmbalagemIngredientes = custoEmbalagem,
+                            PrecoVenda = precoVenda
+                        };
+                    }
+
+                    var salvo = molhoService.CadastrarMolho(novoMolho);
+                    Console.WriteLine($"\nMolho '{salvo.Nome}' (ID {salvo.Id}) cadastrado com sucesso!");
+                    Console.WriteLine(
+                        $"Custo total de producao: {salvo.CustoTotalProducao.ToString("C2", culturaBr)} | Preco venda: {salvo.PrecoVenda.ToString("C2", culturaBr)} | Lucro unitario: {salvo.LucroUnitario.ToString("C2", culturaBr)} ({salvo.MargemLucroPercentual:N1}%)");
+                    Pausar();
+                    break;
+
+                case "0":
+                    return;
+
+                default:
+                    Console.WriteLine("Opcao invalida.");
+                    Pausar();
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"\nErro no catalogo de molhos: {ex.Message}");
+            Pausar();
+        }
+    }
+}
+
+static void ExecutarRelatorioGerencial(MolhoService molhoService, CultureInfo culturaBr)
+{
+    LimparTela();
+    ExibirCabecalho();
+    Console.WriteLine("RELATORIO GERENCIAL DE CUSTOS E LUCRO DA VENDINHA");
+    Console.WriteLine("------------------------------------------------------------");
+
+    try
+    {
+        var rel = molhoService.GerarRelatorioGerencial();
+
+        Console.WriteLine($"Catalogo de Molhos       : {rel.TotalMolhosCatalogo} receita(s) ({rel.TotalTradicionais} tradicional(is), {rel.TotalEspeciaisReserva} reserva(s) especial(is))");
+        Console.WriteLine($"Custo Medio por Frasco   : {rel.MediaCustoPorFrasco.ToString("C2", culturaBr)}");
+        Console.WriteLine($"Preco Medio de Venda     : {rel.MediaPrecoVenda.ToString("C2", culturaBr)}");
+        Console.WriteLine($"Lucro Unitario Medio     : {rel.MediaLucroUnitario.ToString("C2", culturaBr)}");
+        Console.WriteLine($"Margem Media de Lucro    : {rel.MargemMediaPercentual:N2}%");
+        Console.WriteLine("------------------------------------------------------------");
+        Console.WriteLine($"A Receber (Em Aberto)    : {rel.TotalAReceberDividasAbertas.ToString("C2", culturaBr)} ({rel.QuantidadeDividasAbertas} conta(s))");
+        Console.WriteLine($"Ja Recebido (Quitadas)   : {rel.TotalJaRecebidoDividasPagas.ToString("C2", culturaBr)} ({rel.QuantidadeDividasPagas} conta(s))");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"\nErro ao gerar relatorio: {ex.Message}");
     }
 
     Pausar();
@@ -495,7 +909,7 @@ static bool TryParseData(string? texto, out DateOnly data)
     return DateOnly.TryParseExact(texto.Trim(), formatos, CultureInfo.InvariantCulture, DateTimeStyles.None, out data);
 }
 
-static bool TryParseValor(string? texto, CultureInfo culturaBr, out decimal valor)
+static bool TryParseDecimal(string? texto, CultureInfo culturaBr, out decimal valor)
 {
     valor = 0m;
     if (string.IsNullOrWhiteSpace(texto))

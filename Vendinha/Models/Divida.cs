@@ -17,12 +17,22 @@ public class Divida
     // navegacao pro cliente, pode ficar nulo ate carregar com include
     public Cliente? Cliente { get; set; }
 
+    // fk opcional pro molho escolhido no catalogo (nulo se for lancamento avulso)
+    public int? MolhoId { get; set; }
+
+    // navegacao pro molho comprado
+    public Molho? Molho { get; set; }
+
+    // quantidade de frascos levados na compra (padrao 1)
+    [Range(1, int.MaxValue, ErrorMessage = "A quantidade de frascos precisa ser maior que zero.")]
+    public int QuantidadeFrascos { get; set; } = 1;
+
     // descricao dos molhos levados, ja vem com texto padrao se ninguem preencher
     [Required]
     [MaxLength(300)]
     public string DescricaoMolhos { get; set; } = "Molhos de pimenta artesanais do Avô Bob";
 
-    // valor da compra, precisa ser maior que zero
+    // valor da compra, precisa ser maior que zero (ou calculado por preco x frascos)
     [Required]
     [Column(TypeName = "numeric(10,2)")]
     [Range(0.01, 99999999.99, ErrorMessage = "O valor da divida precisa ser maior que zero.")]

@@ -14,7 +14,7 @@ public class DividaService
         _context = context ?? throw new ArgumentNullException(nameof(context));
     }
 
-    // registra uma nova compra pendurada pro cliente respeitando a trava de 1 divida aberta por vez
+    // registra uma nova compra pendurada pro cliente (aceita molho do catalogo ou lancamento avulso)
     public Divida CadastrarDivida(Divida divida)
     {
         ArgumentNullException.ThrowIfNull(divida);
@@ -23,11 +23,6 @@ public class DividaService
         if (!clienteExiste)
         {
             throw new KeyNotFoundException($"Cliente com id {divida.ClienteId} nao encontrado.");
-        }
-
-        if (divida.Valor <= 0)
-        {
-            throw new ArgumentException("O valor da divida precisa ser maior que zero.", nameof(divida));
         }
 
         // regra critica: nao pode pendurar outra enquanto tiver conta em aberto
@@ -40,17 +35,64 @@ public class DividaService
                 "Este cliente ja possui uma divida em aberto e precisa acertar a conta atual de molhos do Avo Bob antes de pendurar outra.");
         }
 
-        if (string.IsNullOrWhiteSpace(divida.DescricaoMolhos))
+        if (divida.MolhoId.HasValue)
         {
-            divida.DescricaoMolhos = "Molhos de pimenta artesanais do Avô Bob";
+            if (divida.QuantidadeFrascos <= 0)
+            {
+                throw new ArgumentException("A quantidade de frascos precisa ser maior que zero.", nameof(divida));
+            }
+
+            var molho = _context.Molhos
+                .Include(m => m.PimentaBase)
+                .FirstOrDefault(m => m.Id == divida.MolhoId.Value);
+
+            if (molho is null)
+            {
+                throw new KeyNotFoundException($"Molho com id {divida.MolhoId.Value} nao encontrado no catalogo.");
+            }
+
+            // calcula o valor da divida direto pelo preco de venda do molho x frascos
+            divida.Valor = Math.Round(molho.PrecoVenda * divida.QuantidadeFrascos, 2);
+
+            if (string.IsNullOrWhiteSpace(divida.DescricaoMolhos) ||
+                divida.DescricaoMolhos == "Molhos de pimenta artesanais do Avô Bob")
+            {
+                var sufixoReserva = molho is MolhoEspecialReserva reserva
+                    ? $" (Reserva {reserva.TempoMaturacaoDias}d)"
+                    : string.Empty;
+
+                divida.DescricaoMolhos = $"{divida.QuantidadeFrascos}x {molho.Nome}{sufixoReserva}";
+            }
+            else
+            {
+                divida.DescricaoMolhos = divida.DescricaoMolhos.Trim();
+            }
         }
         else
         {
-            divida.DescricaoMolhos = divida.DescricaoMolhos.Trim();
-            if (divida.DescricaoMolhos.Length > 300)
+            if (divida.QuantidadeFrascos <= 0)
             {
-                throw new ArgumentException("A descricao dos molhos pode ter no maximo 300 caracteres.", nameof(divida));
+                divida.QuantidadeFrascos = 1;
             }
+
+            if (divida.Valor <= 0)
+            {
+                throw new ArgumentException("O valor da divida precisa ser maior que zero.", nameof(divida));
+            }
+
+            if (string.IsNullOrWhiteSpace(divida.DescricaoMolhos))
+            {
+                divida.DescricaoMolhos = "Molhos de pimenta artesanais do Avô Bob";
+            }
+            else
+            {
+                divida.DescricaoMolhos = divida.DescricaoMolhos.Trim();
+            }
+        }
+
+        if (divida.DescricaoMolhos.Length > 300)
+        {
+            throw new ArgumentException("A descricao dos molhos pode ter no maximo 300 caracteres.", nameof(divida));
         }
 
         divida.DataCriacao = DateTime.Now;
@@ -70,9 +112,24 @@ public class DividaService
         {
             ClienteId = clienteId,
             Valor = valor,
+            QuantidadeFrascos = 1,
             DescricaoMolhos = string.IsNullOrWhiteSpace(descricaoMolhos)
                 ? "Molhos de pimenta artesanais do Avô Bob"
                 : descricaoMolhos
+        };
+
+        return CadastrarDivida(divida);
+    }
+
+    // registra a divida escolhendo um molho do catalogo e a quantidade de frascos
+    public Divida CadastrarDividaPorMolho(int clienteId, int molhoId, int quantidadeFrascos, string? observacao = null)
+    {
+        var divida = new Divida
+        {
+            ClienteId = clienteId,
+            MolhoId = molhoId,
+            QuantidadeFrascos = quantidadeFrascos,
+            DescricaoMolhos = string.IsNullOrWhiteSpace(observacao) ? string.Empty : observacao
         };
 
         return CadastrarDivida(divida);
@@ -90,6 +147,7 @@ public class DividaService
         return _context.Dividas
             .AsNoTracking()
             .Include(d => d.Cliente)
+            .Include(d => d.Molho)
             .Where(d => d.ClienteId == clienteId)
             .OrderBy(d => d.SituacaoPaga)
             .ThenByDescending(d => d.DataCriacao)
@@ -117,5 +175,25 @@ public class DividaService
         _context.SaveChanges();
 
         return divida;
+    }
+
+    // soma o total e quantidade de dividas ainda nao pagas pro relatorio gerencial
+    public (decimal Total, int Quantidade) ObterResumoDividasEmAberto()
+    {
+        var query = _context.Dividas.Where(d => !d.SituacaoPaga);
+        var total = query.Sum(d => (decimal?)d.Valor) ?? 0m;
+        var quantidade = query.Count();
+
+        return (total, quantidade);
+    }
+
+    // soma o total e quantidade de dividas ja recebidas pro relatorio gerencial
+    public (decimal Total, int Quantidade) ObterResumoDividasPagas()
+    {
+        var query = _context.Dividas.Where(d => d.SituacaoPaga);
+        var total = query.Sum(d => (decimal?)d.Valor) ?? 0m;
+        var quantidade = query.Count();
+
+        return (total, quantidade);
     }
 }
